@@ -45,6 +45,7 @@ import profiler from 'app/utils/profiler';
 import withGlobalSelection from 'app/utils/withGlobalSelection';
 import withOrganization from 'app/utils/withOrganization';
 import withSavedSearches from 'app/utils/withSavedSearches';
+import withProjects from 'app/utils/withProjects';
 
 import IssueListActions from './actions';
 import IssueListFilters from './filters';
@@ -74,6 +75,10 @@ const IssueListOverview = createReactClass({
 
     // TODO(apm): manual profiling
     finishProfile: PropTypes.func,
+
+    // from withProjects
+    projects: PropTypes.arrayOf(SentryTypes.Project),
+    loadingProjects: PropTypes.bool,
   },
 
   mixins: [
@@ -267,16 +272,19 @@ const IssueListOverview = createReactClass({
    */
   getGlobalSearchProjects() {
     let {projects} = this.props.selection;
-
     // Not sure how this worked before for "omits null values" test
     projects = (projects && projects.map(p => p.toString())) || [];
 
-    return this.props.organization.projects.filter(p => projects.indexOf(p.id) > -1);
+    const organizationProjects = this.props.organization.projects || this.props.projects;
+    return organizationProjects.filter(p => projects.indexOf(p.id) > -1);
+  },
+
+  getGlobalSearchProjectIds() {
+    return this.props.selection.projects;
   },
 
   fetchMemberList() {
-    const projects = this.getGlobalSearchProjects();
-    const projectIds = projects.map(p => p.id);
+    const projectIds = this.getGlobalSearchProjectIds();
 
     fetchOrgMembers(this.api, this.props.organization.slug, projectIds).then(members => {
       this.setState({memberList: indexMembersByProject(members)});
@@ -492,9 +500,8 @@ const IssueListOverview = createReactClass({
       this.setState({selectedProject: null});
       return;
     }
-    const selectedProject = this.props.organization.projects.find(
-      p => p.slug === uniqProjects[0]
-    );
+    const organizationProjects = this.props.organization.projects || this.props.projects;
+    const selectedProject = organizationProjects.find(p => p.slug === uniqProjects[0]);
     this.setState({selectedProject});
   },
 
@@ -593,17 +600,16 @@ const IssueListOverview = createReactClass({
 
   renderStreamBody() {
     let body;
-    const {organization} = this.props;
+    const projects = this.props.organization.projects || this.props.projects;
     const selectedProjects = this.getGlobalSearchProjects();
     const query = this.getQuery();
 
     // If no projects are selected, then we must check every project the user is a
     // member of and make sure there are no first events for all of the projects
-    const projects = !selectedProjects.length
-      ? organization.projects.filter(p => p.isMember)
+    const filteredProjects = !selectedProjects.length
+      ? projects.filter(p => p.isMember)
       : selectedProjects;
-    const noFirstEvents = projects.every(p => !p.firstEvent);
-
+    const noFirstEvents = filteredProjects.every(p => !p.firstEvent);
     if (this.state.issuesLoading) {
       body = this.renderLoading();
     } else if (this.state.error) {
@@ -611,7 +617,7 @@ const IssueListOverview = createReactClass({
     } else if (this.state.groupIds.length > 0) {
       body = this.renderGroupNodes(this.state.groupIds, this.getGroupStatsPeriod());
     } else if (noFirstEvents) {
-      body = this.renderAwaitingEvents(projects);
+      body = this.renderAwaitingEvents(filteredProjects);
     } else if (query === DEFAULT_QUERY) {
       body = this.renderNoUnresolvedIssues();
     } else {
@@ -665,13 +671,16 @@ const IssueListOverview = createReactClass({
 
   tagValueLoader(key, search) {
     const {orgId} = this.props.params;
-    const projectIds = this.getGlobalSearchProjects().map(p => p.id);
+    const projectIds = this.getGlobalSearchProjectIds();
 
     return fetchTagValues(this.api, orgId, key, search, projectIds);
   },
 
   render() {
-    if (this.props.savedSearchLoading) {
+    if (
+      this.props.savedSearchLoading ||
+      (!this.props.organization.projects && this.props.loadingProjects)
+    ) {
       return this.renderLoading();
     }
     const classes = ['stream-row'];
@@ -767,6 +776,6 @@ const IssueListOverview = createReactClass({
 });
 
 export default withSavedSearches(
-  withGlobalSelection(withOrganization(profiler()(IssueListOverview)))
+  withGlobalSelection(withOrganization(withProjects(profiler()(IssueListOverview))))
 );
 export {IssueListOverview};
